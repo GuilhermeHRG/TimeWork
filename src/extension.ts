@@ -9,6 +9,8 @@ let activityLog: { time: string; action: string; file: string; duration?: string
 let fileDurations: Record<string, number> = {};
 let isTyping = false;
 let panel: vscode.WebviewPanel | null = null;
+let lastActivityTime: number = Date.now();
+let inactivityDuration: number = 0;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extensão ativada.');
@@ -52,6 +54,12 @@ export function activate(context: vscode.ExtensionContext) {
         isTyping = false;
     };
 
+    const updateInactivityDuration = () => {
+        const now = Date.now();
+        inactivityDuration += now - lastActivityTime;
+        lastActivityTime = now;
+    };
+
     const listeners = [
         vscode.workspace.onDidOpenTextDocument((document) => {
             storeEditingTime();
@@ -73,6 +81,7 @@ export function activate(context: vscode.ExtensionContext) {
             isTyping = true;
             if (!startTime) startTime = Date.now();
             resetInactivityTimer();
+            updateInactivityDuration();
         }),
 
         vscode.workspace.onDidSaveTextDocument(() => saveReport()),
@@ -94,7 +103,10 @@ function formatTime(ms: number): string {
 }
 
 function getTimeString(): string {
-    return new Date().toLocaleTimeString();
+    const now = new Date();
+    const date = now.toLocaleDateString('pt-BR'); // Formato de data: dd/mm/yyyy
+    const time = now.toLocaleTimeString('pt-BR'); // Formato de hora: hh:mm:ss
+    return `${date} ${time}`;
 }
 
 function generateHtml(): string {
@@ -123,6 +135,7 @@ function generateHtml(): string {
                 <div class="stats">
                     <p><strong>Tempo total de edição:</strong> ${formatTime(totalEditingTime)}</p>
                     <p><strong>Tempo médio por arquivo:</strong> ${formatTime(avgTime)}</p>
+                    <p><strong>Tempo total de inatividade:</strong> ${formatTime(inactivityDuration)}</p>
                 </div>
                 <canvas id="chart"></canvas>
             </div>
