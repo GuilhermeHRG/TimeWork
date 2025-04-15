@@ -1,126 +1,4 @@
-"use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/extension.ts
-var extension_exports = {};
-__export(extension_exports, {
-  activate: () => activate,
-  deactivate: () => deactivate
-});
-module.exports = __toCommonJS(extension_exports);
-var vscode = __toESM(require("vscode"));
-var fs = __toESM(require("fs"));
-var path = __toESM(require("path"));
-var startTime = null;
-var inactivityTimer = null;
-var currentFile = null;
-var activityLog = [];
-var fileDurations = {};
-var isTyping = false;
-var panel = null;
-function activate(context) {
-  console.log("Extens\xE3o ativada.");
-  panel = vscode.window.createWebviewPanel(
-    "workTimeTracker",
-    "Monitor de Trabalho",
-    vscode.ViewColumn.Beside,
-    { enableScripts: true }
-  );
-  const updatePanel = () => {
-    if (panel) {
-      panel.webview.html = generateHtml();
-      panel.webview.postMessage({ fileDurations });
-    }
-  };
-  const resetInactivityTimer = () => {
-    if (inactivityTimer) clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(() => {
-      storeEditingTime();
-      updatePanel();
-    }, 5e3);
-  };
-  const storeEditingTime = () => {
-    if (currentFile && startTime && isTyping) {
-      const duration = Date.now() - startTime;
-      fileDurations[currentFile] = (fileDurations[currentFile] || 0) + duration;
-      activityLog.push({
-        time: getTimeString(),
-        action: "Editou",
-        file: currentFile,
-        duration: formatTime(duration)
-      });
-      startTime = Date.now();
-    }
-    isTyping = false;
-  };
-  const listeners = [
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      storeEditingTime();
-      currentFile = document.fileName;
-      startTime = Date.now();
-      resetInactivityTimer();
-      updatePanel();
-    }),
-    vscode.workspace.onDidCloseTextDocument((document) => {
-      if (currentFile === document.fileName) {
-        storeEditingTime();
-        currentFile = null;
-      }
-      updatePanel();
-    }),
-    vscode.workspace.onDidChangeTextDocument(() => {
-      isTyping = true;
-      if (!startTime) startTime = Date.now();
-      resetInactivityTimer();
-    }),
-    vscode.workspace.onDidSaveTextDocument(() => saveReport())
-  ];
-  context.subscriptions.push(...listeners, panel);
-}
-function deactivate() {
-  saveReport();
-  panel?.dispose();
-}
-function formatTime(ms) {
-  const sec = Math.floor(ms / 1e3) % 60;
-  const min = Math.floor(ms / (1e3 * 60)) % 60;
-  const hours = Math.floor(ms / (1e3 * 60 * 60));
-  return `${String(hours).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
-function getTimeString() {
-  return (/* @__PURE__ */ new Date()).toLocaleTimeString();
-}
-function generateHtml() {
-  const totalEditingTime = Object.values(fileDurations).reduce((acc, val) => acc + val, 0);
-  const fileCount = Object.keys(fileDurations).length;
-  const avgTime = fileCount > 0 ? totalEditingTime / fileCount : 0;
-  return `
+"use strict";var $=Object.create;var m=Object.defineProperty;var k=Object.getOwnPropertyDescriptor;var C=Object.getOwnPropertyNames;var M=Object.getPrototypeOf,j=Object.prototype.hasOwnProperty;var E=(t,e)=>{for(var o in e)m(t,o,{get:e[o],enumerable:!0})},b=(t,e,o,n)=>{if(e&&typeof e=="object"||typeof e=="function")for(let i of C(e))!j.call(t,i)&&i!==o&&m(t,i,{get:()=>e[i],enumerable:!(n=k(e,i))||n.enumerable});return t};var g=(t,e,o)=>(o=t!=null?$(M(t)):{},b(e||!t||!t.__esModule?m(o,"default",{value:t,enumerable:!0}):o,t)),R=t=>b(m({},"__esModule",{value:!0}),t);var B={};E(B,{activate:()=>O,deactivate:()=>P});module.exports=R(B);var a=g(require("vscode")),w=g(require("fs")),u=g(require("path")),l=null,v=null,r=null,T=[],p={},f=!1,c=null,h=Date.now(),x=0;function O(t){console.log("Extens\xE3o ativada."),c=a.window.createWebviewPanel("workTimeTracker","Monitor de Trabalho",a.ViewColumn.Beside,{enableScripts:!0});let e=()=>{c&&(c.webview.html=D(),c.webview.postMessage({fileDurations:p}))},o=()=>{v&&clearTimeout(v),v=setTimeout(()=>{n(),e()},5e3)},n=()=>{if(r&&l&&f){let s=Date.now()-l;p[r]=(p[r]||0)+s,T.push({time:A(),action:"Editou",file:r,duration:d(s)}),l=Date.now()}f=!1},i=()=>{let s=Date.now();x+=s-h,h=s},y=[a.workspace.onDidOpenTextDocument(s=>{n(),r=s.fileName,l=Date.now(),o(),e()}),a.workspace.onDidCloseTextDocument(s=>{r===s.fileName&&(n(),r=null),e()}),a.workspace.onDidChangeTextDocument(()=>{f=!0,l||(l=Date.now()),o(),i()}),a.workspace.onDidSaveTextDocument(()=>S())];t.subscriptions.push(...y,c)}function P(){S(),c?.dispose()}function d(t){let e=Math.floor(t/1e3)%60,o=Math.floor(t/(1e3*60))%60,n=Math.floor(t/(1e3*60*60));return`${String(n).padStart(2,"0")}:${String(o).padStart(2,"0")}:${String(e).padStart(2,"0")}`}function A(){let t=new Date,e=t.toLocaleDateString("pt-BR"),o=t.toLocaleTimeString("pt-BR");return`${e} ${o}`}function D(){let t=Object.values(p).reduce((n,i)=>n+i,0),e=Object.keys(p).length,o=e>0?t/e:0;return`
         <html>
         <head>
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -136,19 +14,18 @@ function generateHtml() {
         <body>
             <div class="container">
                 <h2>Monitor de Trabalho</h2>
-                <p><strong>Arquivo atual:</strong> ${currentFile ? path.basename(currentFile) : "Nenhum arquivo"}</p>
-                <p><strong>Tempo de edi\xE7\xE3o:</strong> ${startTime ? formatTime(Date.now() - startTime) : "Inativo"}</p>
+                <p><strong>Arquivo atual:</strong> ${r?u.basename(r):"Nenhum arquivo"}</p>
+                <p><strong>Tempo de edi\xE7\xE3o:</strong> ${l?d(Date.now()-l):"Inativo"}</p>
                 <div class="stats">
-                    <p><strong>Tempo total de edi\xE7\xE3o:</strong> ${formatTime(totalEditingTime)}</p>
-                    <p><strong>Tempo m\xE9dio por arquivo:</strong> ${formatTime(avgTime)}</p>
+                    <p><strong>Tempo total de edi\xE7\xE3o:</strong> ${d(t)}</p>
+                    <p><strong>Tempo m\xE9dio por arquivo:</strong> ${d(o)}</p>
+                    <p><strong>Tempo total de inatividade:</strong> ${d(x)}</p>
                 </div>
                 <canvas id="chart"></canvas>
             </div>
             <div class="log">
                 <strong>Atividades Recentes:</strong>
-                ${activityLog.map(
-    (entry) => `<div class="log-entry">${entry.time} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || "00:00:00"})</div>`
-  ).join("")}
+                ${T.map(n=>`<div class="log-entry">${n.time} - ${n.action}: <strong>${u.basename(n.file)}</strong> (${n.duration||"00:00:00"})</div>`).join("")}
             </div>
             <script>
                 function formatChartTime(ms) {
@@ -191,16 +68,4 @@ function generateHtml() {
             </script>
         </body>
         </html>
-    `;
-}
-function saveReport() {
-  const logPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "", "log.html");
-  fs.writeFileSync(logPath, generateHtml());
-  console.log("Relat\xF3rio salvo em:", logPath);
-}
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  activate,
-  deactivate
-});
-//# sourceMappingURL=extension.js.map
+    `}function S(){let t=u.join(a.workspace.workspaceFolders?.[0]?.uri.fsPath||"","log.html");w.writeFileSync(t,D()),console.log("Relat\xF3rio salvo em:",t)}0&&(module.exports={activate,deactivate});
