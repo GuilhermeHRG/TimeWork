@@ -3,96 +3,58 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 let startTime: number | null = null;
-let inactivityTimer: NodeJS.Timeout | null = null;
 let currentFile: string | null = null;
 let activityLog: { time: string; action: string; file: string; duration?: string }[] = [];
 let fileDurations: Record<string, number> = {};
-let isTyping = false;
 let panel: vscode.WebviewPanel | null = null;
-let lastActivityTime: number = Date.now();
 let inactivityDuration: number = 0;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extensão ativada.');
 
-    panel = vscode.window.createWebviewPanel(
-        'workTimeTracker',
-        'Monitor de Trabalho',
-        vscode.ViewColumn.Beside,
-        { enableScripts: true }
-    );
-
-    const updatePanel = () => {
+    const createOrShowPanel = () => {
         if (panel) {
+            panel.reveal(vscode.ViewColumn.Beside);
+        } else {
+            panel = vscode.window.createWebviewPanel(
+                'workTimeTracker',
+                'Monitor de Trabalho',
+                vscode.ViewColumn.Beside,
+                { enableScripts: true }
+            );
+
             panel.webview.html = generateHtml();
             panel.webview.postMessage({ fileDurations });
-        }
-    };
 
-    const resetInactivityTimer = () => {
-        if (inactivityTimer) clearTimeout(inactivityTimer);
-        inactivityTimer = setTimeout(() => {
-            storeEditingTime();
-            updatePanel();
-        }, 5000);
-    };
-
-    const storeEditingTime = () => {
-        if (currentFile && startTime && isTyping) {
-            const duration = Date.now() - startTime;
-            fileDurations[currentFile] = (fileDurations[currentFile] || 0) + duration;
-
-            activityLog.push({
-                time: getTimeString(),
-                action: 'Editou',
-                file: currentFile,
-                duration: formatTime(duration),
+            panel.onDidDispose(() => {
+                panel = null;
             });
-
-            startTime = Date.now();
         }
-        isTyping = false;
     };
 
-    const updateInactivityDuration = () => {
-        const now = Date.now();
-        inactivityDuration += now - lastActivityTime;
-        lastActivityTime = now;
-    };
+    // 🧠 Status bar que abre o painel
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.text = `📝 Painel`;
+    statusBarItem.tooltip = 'Clique para abrir o painel de produtividade';
+    statusBarItem.command = 'extension.toggleDashboard'; // Referência ao comando abaixo
+    statusBarItem.show();
 
-    const listeners = [
-        vscode.workspace.onDidOpenTextDocument((document) => {
-            storeEditingTime();
-            currentFile = document.fileName;
-            startTime = Date.now();
-            resetInactivityTimer();
-            updatePanel();
-        }),
+    // Registra o comando apenas para o botão (sem mostrar na paleta)
+    const openPanelCommand = vscode.commands.registerCommand('extension.toggleDashboard', () => {
+        createOrShowPanel();
+    });
 
-        vscode.workspace.onDidCloseTextDocument((document) => {
-            if (currentFile === document.fileName) {
-                storeEditingTime();
-                currentFile = null;
-            }
-            updatePanel();
-        }),
+    // Abrir automaticamente ao iniciar
+    createOrShowPanel();
 
-        vscode.workspace.onDidChangeTextDocument(() => {
-            isTyping = true;
-            if (!startTime) startTime = Date.now();
-            resetInactivityTimer();
-            updateInactivityDuration();
-        }),
-
-        vscode.workspace.onDidSaveTextDocument(() => saveReport()),
-    ];
-
-    context.subscriptions.push(...listeners, panel);
+    context.subscriptions.push(statusBarItem, openPanelCommand);
 }
+
 
 export function deactivate() {
     saveReport();
     panel?.dispose();
+    // statusBarItem?.dispose();
 }
 
 function formatTime(ms: number): string {
@@ -102,12 +64,6 @@ function formatTime(ms: number): string {
     return `${String(hours).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
-function getTimeString(): string {
-    const now = new Date();
-    const date = now.toLocaleDateString('pt-BR'); // Formato de data: dd/mm/yyyy
-    const time = now.toLocaleTimeString('pt-BR'); // Formato de hora: hh:mm:ss
-    return `${date} ${time}`;
-}
 
 function generateHtml(): string {
     const totalEditingTime = Object.values(fileDurations).reduce((acc, val) => acc + val, 0);
@@ -131,7 +87,7 @@ function generateHtml(): string {
             <div class="container">
                 <h2>Monitor de Trabalho</h2>
                 <p><strong>Arquivo atual:</strong> ${currentFile ? path.basename(currentFile) : 'Nenhum arquivo'}</p>
-                <p><strong>Tempo de edição:</strong> ${startTime ? formatTime(Date.now() - startTime) : 'Inativo'}</p>
+                <p><strong>Tempo de edição atual:</strong> ${startTime ? formatTime(Date.now() - startTime) : 'Inativo'}</p>
                 <div class="stats">
                     <p><strong>Tempo total de edição:</strong> ${formatTime(totalEditingTime)}</p>
                     <p><strong>Tempo médio por arquivo:</strong> ${formatTime(avgTime)}</p>
@@ -141,7 +97,7 @@ function generateHtml(): string {
             </div>
             <div class="log">
                 <strong>Atividades Recentes:</strong>
-                ${activityLog.map(entry => 
+                ${activityLog.map(entry =>
                     `<div class="log-entry">${entry.time} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || '00:00:00'})</div>`
                 ).join('')}
             </div>
