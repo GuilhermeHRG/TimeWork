@@ -8,9 +8,17 @@ let activityLog: { time: string; action: string; file: string; duration?: string
 let fileDurations: Record<string, number> = {};
 let panel: vscode.WebviewPanel | null = null;
 let inactivityDuration: number = 0;
+let inactivityTimer: NodeJS.Timeout | null = null;
+let lastActiveTime: number = Date.now();
+let isInactive = false;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extensão ativada.');
+
+    const savedDurations = context.globalState.get<Record<string, number>>('fileDurations');
+    const savedLog = context.globalState.get<typeof activityLog>('activityLog');
+    if (savedDurations) fileDurations = savedDurations;
+    if (savedLog) activityLog = savedLog;
 
     const createOrShowPanel = () => {
         if (panel) {
@@ -32,29 +40,107 @@ export function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    // 🧠 Status bar que abre o painel
+    const updateAndPersist = () => {
+        context.globalState.update('fileDurations', fileDurations);
+        context.globalState.update('activityLog', activityLog);
+        if (panel) panel.webview.postMessage({ fileDurations });
+    };
+
+    const marcarInatividade = () => {
+        if (!isInactive) {
+            isInactive = true;
+            lastActiveTime = Date.now();
+            activityLog.push({
+                time: new Date().toISOString(),
+                action: 'inatividade detectada',
+                file: currentFile || '',
+                duration: '---'
+            });
+            updateAndPersist();
+        }
+    };
+
+    const retornarDeInatividade = () => {
+        if (isInactive) {
+            const now = Date.now();
+            const inactiveTime = now - lastActiveTime;
+            inactivityDuration += inactiveTime;
+            activityLog.push({
+                time: new Date().toISOString(),
+                action: 'retorno da inatividade',
+                file: currentFile || '',
+                duration: formatTime(inactiveTime)
+            });
+            isInactive = false;
+            updateAndPersist();
+        }
+        lastActiveTime = Date.now();
+    };
+
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.text = `📝 Painel`;
     statusBarItem.tooltip = 'Clique para abrir o painel de produtividade';
-    statusBarItem.command = 'extension.toggleDashboard'; // Referência ao comando abaixo
+    statusBarItem.command = 'extension.toggleDashboard';
     statusBarItem.show();
 
-    // Registra o comando apenas para o botão (sem mostrar na paleta)
     const openPanelCommand = vscode.commands.registerCommand('extension.toggleDashboard', () => {
         createOrShowPanel();
     });
 
-    // Abrir automaticamente ao iniciar
-    createOrShowPanel();
+    vscode.workspace.onDidChangeTextDocument(() => {
+        retornarDeInatividade();
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(marcarInatividade, 60 * 1000);
+    });
 
+    vscode.window.onDidChangeWindowState(state => {
+        if (state.focused) {
+            retornarDeInatividade();
+        } else {
+            marcarInatividade();
+        }
+    });
+
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor) {
+            if (startTime !== null && currentFile) {
+                const duration = Date.now() - startTime;
+                fileDurations[currentFile] = (fileDurations[currentFile] || 0) + duration;
+                activityLog.push({
+                    time: new Date().toISOString(),
+                    action: 'troca de arquivo',
+                    file: currentFile,
+                    duration: formatTime(duration)
+                });
+                updateAndPersist();
+            }
+            currentFile = editor.document.uri.fsPath;
+            startTime = Date.now();
+        }
+    });
+
+    vscode.workspace.onDidCloseTextDocument(() => {
+        if (startTime !== null && currentFile) {
+            const duration = Date.now() - startTime;
+            fileDurations[currentFile] = (fileDurations[currentFile] || 0) + duration;
+            activityLog.push({
+                time: new Date().toISOString(),
+                action: 'fechamento',
+                file: currentFile,
+                duration: formatTime(duration)
+            });
+            updateAndPersist();
+            startTime = null;
+        }
+    });
+
+    createOrShowPanel();
     context.subscriptions.push(statusBarItem, openPanelCommand);
 }
-
 
 export function deactivate() {
     saveReport();
     panel?.dispose();
-    // statusBarItem?.dispose();
 }
 
 function formatTime(ms: number): string {
@@ -63,7 +149,6 @@ function formatTime(ms: number): string {
     const hours = Math.floor(ms / (1000 * 60 * 60));
     return `${String(hours).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
-
 
 function generateHtml(): string {
     const totalEditingTime = Object.values(fileDurations).reduce((acc, val) => acc + val, 0);
@@ -94,13 +179,27 @@ function generateHtml(): string {
                     <p><strong>Tempo total de inatividade:</strong> ${formatTime(inactivityDuration)}</p>
                 </div>
                 <canvas id="chart"></canvas>
+                <p style="margin-top: 10px; font-size: 12px; color: #aaa;">
+                    Atualizado em: <span id="dataAtualizada"></span>
+                </p>
             </div>
+
             <div class="log">
                 <strong>Atividades Recentes:</strong>
-                ${activityLog.map(entry =>
-                    `<div class="log-entry">${entry.time} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || '00:00:00'})</div>`
-                ).join('')}
+                ${activityLog.map(entry => {
+    const dataFormatada = new Date(entry.time).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    return `<div class="log-entry">${dataFormatada} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || '00:00:00'})</div>`;
+}).join('')}
+
             </div>
+
             <script>
                 function formatChartTime(ms) {
                     const sec = Math.floor(ms / 1000) % 60;
@@ -112,7 +211,7 @@ function generateHtml(): string {
                 window.addEventListener('message', event => {
                     const data = event.data;
                     const ctx = document.getElementById('chart').getContext('2d');
-                    const labels = Object.keys(data.fileDurations).map(file => file.split('/').pop());
+                    const labels = Object.keys(data.fileDurations).map(file => file.split(/[\\\\/]/).pop());
                     const values = Object.values(data.fileDurations);
 
                     new Chart(ctx, {
@@ -138,12 +237,26 @@ function generateHtml(): string {
                             }
                         }
                     });
+
+                    // Atualiza a data no formato pt-BR
+                    const dataAtual = new Date();
+                    const formatado = dataAtual.toLocaleString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+                    document.getElementById('dataAtualizada').innerText = formatado;
                 });
             </script>
         </body>
         </html>
     `;
 }
+
+
 
 function saveReport() {
     const logPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'log.html');
