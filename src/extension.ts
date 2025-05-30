@@ -2,6 +2,15 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { enviarRelatorioParaFirestore } from './firebase';
+import { authenticateUser } from './auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from './firebase';
+
+
+let currentUserUid: string | null = null;
+let panelInitialized = false;
+
 let startTime: number | null = null;
 let currentFile: string | null = null;
 let activityLog: { time: string; action: string; file: string; duration?: string }[] = [];
@@ -11,40 +20,67 @@ let inactivityDuration: number = 0;
 let inactivityTimer: NodeJS.Timeout | null = null;
 let lastActiveTime: number = Date.now();
 let isInactive = false;
+const projectName = vscode.workspace.workspaceFolders?.[0]?.name || 'sem-projeto';
+
+
 
 export function activate(context: vscode.ExtensionContext) {
+    authenticateUser().then(user => {
+        if (user) {
+            currentUserUid = user.uid;
+            console.log('Usuário autenticado:', user);
+        } else {
+            console.log('Usuário não autenticado.');
+        }
+    });
+
     console.log('Extensão ativada.');
 
     const savedDurations = context.globalState.get<Record<string, number>>('fileDurations');
     const savedLog = context.globalState.get<typeof activityLog>('activityLog');
     if (savedDurations) fileDurations = savedDurations;
     if (savedLog) activityLog = savedLog;
-
-    const createOrShowPanel = () => {
-        if (panel) {
-            panel.reveal(vscode.ViewColumn.Beside);
-        } else {
-            panel = vscode.window.createWebviewPanel(
-                'workTimeTracker',
-                'Monitor de Trabalho',
-                vscode.ViewColumn.Beside,
-                { enableScripts: true }
-            );
-
-            panel.webview.html = generateHtml();
-            panel.webview.postMessage({ fileDurations });
-
-            panel.onDidDispose(() => {
-                panel = null;
-            });
+ // 🔁 Zera os dados SOMENTE na primeira criação do painel
+        if (!panelInitialized) {
+            fileDurations = {};
+            activityLog = [];
+            inactivityDuration = 0;
+            startTime = null;
+            currentFile = null;
+            panelInitialized = true;
         }
-    };
+   const createOrShowPanel = () => {
+    if (panel) {
+        panel.reveal(vscode.ViewColumn.Beside);
+    } else {
+        panel = vscode.window.createWebviewPanel(
+            'workTimeTracker',
+            'Monitor de Trabalho',
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+        );
 
-    const updateAndPersist = () => {
+       
+
+        panel.webview.html = generateHtml();
+        panel.webview.postMessage({ fileDurations });
+
+        panel.onDidDispose(() => {
+            panel = null;
+            panelInitialized = false; // 👉 permite reset da próxima vez que abrir
+        });
+    }
+};
+
+
+    function updateAndPersist(context: vscode.ExtensionContext) {
         context.globalState.update('fileDurations', fileDurations);
         context.globalState.update('activityLog', activityLog);
         if (panel) panel.webview.postMessage({ fileDurations });
-    };
+
+        sendReportToFirebase(); // aqui
+    }
+
 
     const marcarInatividade = () => {
         if (!isInactive) {
@@ -56,7 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
                 file: currentFile || '',
                 duration: '---'
             });
-            updateAndPersist();
+            updateAndPersist(context);
         }
     };
 
@@ -72,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
                 duration: formatTime(inactiveTime)
             });
             isInactive = false;
-            updateAndPersist();
+            updateAndPersist(context);
         }
         lastActiveTime = Date.now();
     };
@@ -112,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
                     file: currentFile,
                     duration: formatTime(duration)
                 });
-                updateAndPersist();
+                updateAndPersist(context);
             }
             currentFile = editor.document.uri.fsPath;
             startTime = Date.now();
@@ -129,7 +165,7 @@ export function activate(context: vscode.ExtensionContext) {
                 file: currentFile,
                 duration: formatTime(duration)
             });
-            updateAndPersist();
+            updateAndPersist(context);
             startTime = null;
         }
     });
@@ -187,16 +223,16 @@ function generateHtml(): string {
             <div class="log">
                 <strong>Atividades Recentes:</strong>
                 ${activityLog.map(entry => {
-    const dataFormatada = new Date(entry.time).toLocaleString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-    return `<div class="log-entry">${dataFormatada} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || '00:00:00'})</div>`;
-}).join('')}
+        const dataFormatada = new Date(entry.time).toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        return `<div class="log-entry">${dataFormatada} - ${entry.action}: <strong>${path.basename(entry.file)}</strong> (${entry.duration || '00:00:00'})</div>`;
+    }).join('')}
 
             </div>
 
@@ -257,9 +293,62 @@ function generateHtml(): string {
 }
 
 
+function isHoje(date: Date): boolean {
+    const hoje = new Date();
+    return (
+        date.getDate() === hoje.getDate() &&
+        date.getMonth() === hoje.getMonth() &&
+        date.getFullYear() === hoje.getFullYear()
+    );
+}
+
+
+
+
+function getHojeISODate(): string {
+  const hoje = new Date();
+  return hoje.toISOString().split('T')[0]; // ex: "2025-05-28"
+}
+
+function sendReportToFirebase() {
+  const logsHoje = activityLog.filter(log => isHoje(new Date(log.time)));
+
+  const arquivosHoje = logsHoje.map(log => log.file);
+  const fileDurationsHoje: Record<string, number> = {};
+
+  arquivosHoje.forEach(file => {
+    if (fileDurations[file]) {
+      fileDurationsHoje[file] = fileDurations[file];
+    }
+  });
+
+  const dataHoje = getHojeISODate();
+  const documentId = `${projectName}-${dataHoje}`;
+
+  const jsonPayload = {
+    fileDurations: fileDurationsHoje,
+    activityLog: logsHoje,
+    inactivityDuration,
+    timestamp: new Date().toISOString(),
+    userId: currentUserUid,
+    projeto: projectName
+  };
+
+  const ref = doc(db, 'relatorios', documentId); 
+
+  setDoc(ref, jsonPayload)
+    .then(() => console.log(`✅ Relatório salvo como: ${documentId}`))
+    .catch(err => console.error('❌ Erro ao enviar relatório:', err));
+}
+
+
 
 function saveReport() {
     const logPath = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'log.html');
     fs.writeFileSync(logPath, generateHtml());
-    console.log('Relatório salvo em:', logPath);
+    console.log('📄 Relatório HTML salvo em:', logPath);
+
+    sendReportToFirebase();
 }
+
+

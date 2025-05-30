@@ -1,35 +1,19 @@
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut } from "firebase/auth";
-import { app } from "./firebase";
+// src/auth.ts
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import { app } from './firebase';
 
 const auth = getAuth(app);
-const provider = new GoogleAuthProvider();
 
-export async function signInWithGoogle() {
+export async function authenticateUser() {
   try {
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInAnonymously(auth);
     const user = result.user;
-
+    console.log('Usuário anônimo autenticado:', user.uid);
     return {
-      uid: user.uid,
-      name: user.displayName,
-      email: user.email,
-      photo: user.photoURL,
+      uid: user.uid
     };
   } catch (error) {
-    console.error("Erro na autenticação:", error);
+    console.error('Erro ao autenticar anonimamente:', error);
     return null;
   }
-}
-
-export async function logout() {
-  try {
-    await signOut(auth);
-  } catch (error) {
-    console.error("Erro ao deslogar:", error);
-  }
-}
-
-// Adiciona a função authenticateUser para evitar erro
-export async function authenticateUser() {
-  return await signInWithGoogle();
 }
