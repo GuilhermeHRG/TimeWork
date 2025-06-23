@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { enviarRelatorioParaFirestore } from './firebase';
 import { authenticateUser } from './auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
@@ -10,7 +9,6 @@ import * as os from 'os';
 
 
 
-let currentUserUid: string = os.hostname();
 let panelInitialized = false;
 
 let startTime: number | null = null;
@@ -23,51 +21,76 @@ let inactivityTimer: NodeJS.Timeout | null = null;
 let lastActiveTime: number = Date.now();
 let isInactive = false;
 const projectName = vscode.workspace.workspaceFolders?.[0]?.name || 'sem-projeto';
+const machineName = os.hostname();
+let currentUserUid: string | null = null;
 
+
+
+function getLocalIp() {
+  const ifaces = os.networkInterfaces();
+  for (const ifaceName of Object.keys(ifaces)) {
+    for (const iface of ifaces[ifaceName] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'unknown';
+}
+
+const machineIp = getLocalIp();
 
 
 export function activate(context: vscode.ExtensionContext) {
+    
+    authenticateUser().then(user => {
+    if (user) {
+        currentUserUid = user.uid; 
+        console.log('Usuário autenticado:', user);
+    } else {
+        console.log('Usuário não autenticado.');
+    }
+});
 
-    currentUserUid = os.hostname();
+
+
     console.log('Extensão ativada.');
-    console.log('🧑‍💻 Nome da máquina:', currentUserUid);
-
 
     const savedDurations = context.globalState.get<Record<string, number>>('fileDurations');
     const savedLog = context.globalState.get<typeof activityLog>('activityLog');
     if (savedDurations) fileDurations = savedDurations;
     if (savedLog) activityLog = savedLog;
-    // 🔁 Zera os dados SOMENTE na primeira criação do painel
-    if (!panelInitialized) {
-        fileDurations = {};
-        activityLog = [];
-        inactivityDuration = 0;
-        startTime = null;
-        currentFile = null;
-        panelInitialized = true;
-    }
-    const createOrShowPanel = () => {
-        if (panel) {
-            panel.reveal(vscode.ViewColumn.Beside);
-        } else {
-            panel = vscode.window.createWebviewPanel(
-                'workTimeTracker',
-                'Monitor de Trabalho',
-                vscode.ViewColumn.Beside,
-                { enableScripts: true }
-            );
-
-
-
-            panel.webview.html = generateHtml();
-            panel.webview.postMessage({ fileDurations });
-
-            panel.onDidDispose(() => {
-                panel = null;
-                panelInitialized = false; // 👉 permite reset da próxima vez que abrir
-            });
+ 
+        if (!panelInitialized) {
+            fileDurations = {};
+            activityLog = [];
+            inactivityDuration = 0;
+            startTime = null;
+            currentFile = null;
+            panelInitialized = true;
         }
-    };
+   const createOrShowPanel = () => {
+    if (panel) {
+        panel.reveal(vscode.ViewColumn.Beside);
+    } else {
+        panel = vscode.window.createWebviewPanel(
+            'workTimeTracker',
+            'Monitor de Trabalho',
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+        );
+
+       
+
+        panel.webview.html = generateHtml();
+        panel.webview.postMessage({ fileDurations });
+
+        panel.onDidDispose(() => {
+            panel = null;
+            panelInitialized = false; 
+        });
+    }
+};
 
 
     function updateAndPersist(context: vscode.ExtensionContext) {
@@ -303,39 +326,43 @@ function isHoje(date: Date): boolean {
 
 
 function getHojeISODate(): string {
-    const hoje = new Date();
-    return hoje.toISOString().split('T')[0]; // ex: "2025-05-28"
+  const hoje = new Date();
+  return hoje.toISOString().split('T')[0]; 
 }
 
 function sendReportToFirebase() {
-    const logsHoje = activityLog.filter(log => isHoje(new Date(log.time)));
+  const logsHoje = activityLog.filter(log => isHoje(new Date(log.time)));
 
-    const arquivosHoje = logsHoje.map(log => log.file);
-    const fileDurationsHoje: Record<string, number> = {};
+  const arquivosHoje = logsHoje.map(log => log.file);
+  const fileDurationsHoje: Record<string, number> = {};
 
-    arquivosHoje.forEach(file => {
-        if (fileDurations[file]) {
-            fileDurationsHoje[file] = fileDurations[file];
-        }
-    });
+  arquivosHoje.forEach(file => {
+    if (fileDurations[file]) {
+      fileDurationsHoje[file] = fileDurations[file];
+    }
+  });
 
-    const dataHoje = getHojeISODate();
-    const documentId = `${projectName}-${dataHoje}`;
+  const dataHoje = getHojeISODate();
+  const documentId = `${projectName}-${dataHoje}`;
 
-    const jsonPayload = {
-        fileDurations: fileDurationsHoje,
-        activityLog: logsHoje,
-        inactivityDuration,
-        timestamp: new Date().toISOString(),
-        userId: currentUserUid,
-        projeto: projectName
-    };
+const jsonPayload = {
+  fileDurations: fileDurationsHoje,
+  activityLog: logsHoje,
+  inactivityDuration,
+  timestamp: new Date().toISOString(),
+  machineName,
+  machineIp,
+  projeto: projectName,
+  identifier: `${machineName}-${machineIp}`,
+};
 
-    const ref = doc(db, 'relatorios', documentId);
 
-    setDoc(ref, jsonPayload)
-        .then(() => console.log(`✅ Relatório salvo como: ${documentId}`))
-        .catch(err => console.error('❌ Erro ao enviar relatório:', err));
+
+const ref = doc(db, 'relatorios', documentId); 
+
+  setDoc(ref, jsonPayload)
+    .then(() => console.log(`✅ Relatório salvo como: ${documentId}`))
+    .catch(err => console.error('❌ Erro ao enviar relatório:', err));
 }
 
 

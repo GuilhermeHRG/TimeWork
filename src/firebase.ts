@@ -14,7 +14,6 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-// ✅ nova função para salvar no Firestore
 export async function enviarRelatorioParaFirestore(payload: any) {
   try {
     const docRef = await addDoc(collection(db, 'relatorios'), payload);
